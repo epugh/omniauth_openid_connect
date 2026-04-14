@@ -127,6 +127,61 @@ module OmniAuth
         assert_nil strategy.options.client_options.end_session_endpoint
       end
 
+      def test_request_phase_with_discovery_http_scheme_and_port
+        expected_redirect = %r{^http://keycloak:8080/authorize\?client_id=1234&nonce=\w{32}&response_type=code&scope=openid&state=\w{32}$}
+
+        strategy.options.client_options.scheme = 'http'
+        strategy.options.client_options.host = 'keycloak'
+        strategy.options.client_options.port = 8080
+        strategy.options.discovery = true
+
+        # Simulate provider discovery for issuer (used when options.issuer is empty)
+        issuer = stub('OpenIDConnect::Discovery::Issuer')
+        issuer.stubs(:issuer).returns('http://keycloak:8080/realms/quepid')
+        ::OpenIDConnect::Discovery::Provider.stubs(:discover!).with('http://keycloak:8080').returns(issuer)
+
+        config = stub('OpenIDConnect::Discovery::Provider::Config')
+        config.stubs(:issuer).returns('http://keycloak:8080/realms/quepid')
+        config.stubs(:authorization_endpoint).returns('http://keycloak:8080/authorize')
+        config.stubs(:token_endpoint).returns('http://keycloak:8080/token')
+        config.stubs(:userinfo_endpoint).returns('http://keycloak:8080/userinfo')
+        config.stubs(:jwks_uri).returns('http://keycloak:8080/jwks')
+        ::OpenIDConnect::Discovery::Provider::Config.stubs(:discover!).with('http://keycloak:8080').returns(config)
+
+        strategy.expects(:redirect).with(regexp_matches(expected_redirect))
+        strategy.request_phase
+
+        assert_equal 'http://keycloak:8080/realms/quepid', strategy.options.issuer
+        assert_equal 'http://keycloak:8080/authorize', strategy.options.client_options.authorization_endpoint
+      end
+
+      def test_discovery_ignores_scheme_less_issuer_and_falls_back_to_client_options
+        # issuer is present but scheme-less; discovery should not use it as base
+        strategy.options.issuer = 'keycloak:8080/realms/quepid'
+        strategy.options.discovery = true
+        strategy.options.client_options.scheme = 'http'
+        strategy.options.client_options.host = 'keycloak'
+        strategy.options.client_options.port = 8080
+
+        config = stub('OpenIDConnect::Discovery::Provider::Config')
+        config.stubs(:issuer).returns('http://keycloak:8080/realms/quepid')
+        config.stubs(:authorization_endpoint).returns('http://keycloak:8080/authorize')
+        config.stubs(:token_endpoint).returns('http://keycloak:8080/token')
+        config.stubs(:userinfo_endpoint).returns('http://keycloak:8080/userinfo')
+        config.stubs(:jwks_uri).returns('http://keycloak:8080/jwks')
+
+        # key assertion: discover! uses http://keycloak:8080 (from client_options), NOT the scheme-less issuer
+        ::OpenIDConnect::Discovery::Provider::Config.expects(:discover!).with('http://keycloak:8080').returns(config)
+
+        # call the private method via request_phase which triggers discover!
+        ::OpenIDConnect::Discovery::Provider.stubs(:discover!).returns(stub('OpenIDConnect::Discovery::Issuer', issuer: 'http://keycloak:8080/realms/quepid'))
+
+        strategy.expects(:redirect)
+        strategy.request_phase
+
+        assert_equal 'http://keycloak:8080/realms/quepid', strategy.options.issuer
+      end
+
       def test_request_phase_with_response_mode
         expected_redirect = %r{^https://example\.com/authorize\?client_id=1234&nonce=\w{32}&response_mode=form_post&response_type=id_token&scope=openid&state=\w{32}$}
         strategy.options.issuer = 'example.com'
