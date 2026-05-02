@@ -33,8 +33,7 @@ module OmniAuth
                               token_endpoint: '/token',
                               userinfo_endpoint: '/userinfo',
                               jwks_uri: '/jwk',
-                              end_session_endpoint: nil,
-                              ssl_verify: true)
+                              end_session_endpoint: nil)
 
       option :issuer
       option :discovery, false
@@ -72,6 +71,7 @@ module OmniAuth
       }
 
       option :logout_path, '/logout'
+      option :http_config, nil
 
       def uid
         user_info.raw_attributes[options.uid_field.to_sym] || user_info.sub
@@ -107,22 +107,22 @@ module OmniAuth
       end
 
       def client
-        configure_ssl_verification
         @client ||= ::OpenIDConnect::Client.new(client_options)
       end
 
       def config
-        configure_ssl_verification
         @config ||= ::OpenIDConnect::Discovery::Provider::Config.discover!(options.issuer)
       end
 
       def request_phase
+        configure_http!
         options.issuer = issuer if options.issuer.to_s.empty?
         discover!
         redirect authorize_uri
       end
 
       def callback_phase
+        configure_http!
         error = params['error_reason'] || params['error']
         error_description = params['error_description'] || params['error_reason']
         invalid_state =
@@ -160,6 +160,7 @@ module OmniAuth
 
       def other_phase
         if logout_path_pattern.match?(current_path)
+          configure_http!
           options.issuer = issuer if options.issuer.to_s.empty?
           discover!
           return redirect(end_session_uri) if end_session_uri
@@ -237,18 +238,10 @@ module OmniAuth
 
       private
 
-      def configure_ssl_verification
-        return if @ssl_configured
+      def configure_http!
+        return unless options.http_config.respond_to?(:call)
 
-        # Configure SSL verification for the Faraday connection used by openid_connect gem
-        # This affects discovery, jwks_uri fetching, and token endpoint requests
-        unless client_options.ssl_verify
-          ::OpenIDConnect.http_config do |config|
-            config.ssl.verify = false
-          end
-        end
-
-        @ssl_configured = true
+        ::OpenIDConnect.http_config(&options.http_config)
       end
 
       def fetch_key

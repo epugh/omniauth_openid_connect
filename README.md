@@ -51,6 +51,7 @@ end
 ### For development with self-signed certificates
 
 **WARNING**: Only use this in development/testing environments, never in production!
+This option sets **process-global** HTTP configuration for the underlying `openid_connect` gem. In a multi-provider application, whichever strategy calls `http_config` first wins for the lifetime of the process—even providers that never set this option will be affected.
 
 ```ruby
 Rails.application.config.middleware.use OmniAuth::Builder do
@@ -59,6 +60,7 @@ Rails.application.config.middleware.use OmniAuth::Builder do
     scope: [:openid, :email, :profile, :address],
     response_type: :code,
     uid_field: "preferred_username",
+    http_config: proc { |f| f.ssl.verify = false },  # Disable SSL verification for self-signed certs
     client_options: {
       port: 8443,
       scheme: "https",
@@ -66,7 +68,6 @@ Rails.application.config.middleware.use OmniAuth::Builder do
       identifier: ENV["OP_CLIENT_ID"],
       secret: ENV["OP_SECRET_KEY"],
       redirect_uri: "http://myapp.com/users/auth/openid_connect/callback",
-      ssl_verify: false  # Disable SSL certificate verification for self-signed certs
     },
   }
 end
@@ -120,6 +121,7 @@ end
 | jwt_secret_base64            | For HMAC with SHA2 (e.g. HS256) signing algorithms, specify the base64-encoded secret used to sign the JWT token. Defaults to the OAuth2 client secret if not specified. | no       | client_options.secret         | "bXlzZWNyZXQ=\n"                                    |
 | logout_path                  | The log out is only triggered when the request path ends on this path                                                                                                    | no       | '/logout'                     | '/sign_out'                                         |
 | acr_values                   | Authentication Class Reference (ACR) values to be passed to the authorize_uri to enforce a specific level, see [RFC9470](https://www.rfc-editor.org/rfc/rfc9470.html)    | no       | nil                           | "c1 c2"                                             |
+| http_config                  | A callable (e.g. a `proc`) that receives a Faraday connection and configures it. This is **process-global** state—all providers in the same process share it. Use for custom SSL settings (CA file, mTLS, etc.) in development only. | no       | nil                           | `proc { \|f\| f.ssl.verify = false }`               |
 
 ### Client Config Options
 
@@ -139,7 +141,6 @@ These are the configuration options for the client_options hash of the configura
 | userinfo_endpoint      | The user info endpoint on the authorization server              | /userinfo  | yes                    |
 | jwks_uri               | The jwks_uri on the authorization server                        | /jwk       | yes                    |
 | end_session_endpoint   | The url to call to log the user out at the authorization server | nil        | yes                    |
-| ssl_verify             | Control SSL certificate verification (set to false for self-signed certificates) | true       |                        |
 
 ### Additional Configuration Notes
   * `name` is arbitrary, I recommend using the name of your provider. The name
@@ -172,10 +173,7 @@ These are the configuration options for the client_options hash of the configura
   this is not in the protocol specifications. In those cases, the `send_scope_to_token_endpoint`
   property can be used to add the attribute to the token request. Initial value is `true`, which means that the
   scope attribute is included by default.
-  * The `ssl_verify` option can be set to `false` to disable SSL certificate verification when using self-signed 
-  certificates in development or testing environments. **WARNING**: This should **NEVER** be used in production 
-  as it disables certificate verification and makes your application vulnerable to man-in-the-middle attacks. 
-  Always use properly signed certificates in production environments.
+  * The `http_config` option accepts a callable (proc/lambda) that receives a Faraday builder and can configure any HTTP/SSL option the underlying gem supports. For example: `http_config: proc { |f| f.ssl.verify = false }` disables SSL certificate verification (useful for self-signed certs in development). **WARNING**: This is **process-global** state—it affects all providers in the same process. In a multi-provider app, whichever strategy invokes `http_config` first sets it for everyone. This must **NEVER** be used to disable SSL verification in production, as it makes your application vulnerable to man-in-the-middle attacks.
 
 ## Additional notes
   * In some cases, you may want to go straight to the callback phase - e.g. when requested by a stateless client, like a mobile app.

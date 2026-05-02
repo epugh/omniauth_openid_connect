@@ -972,21 +972,53 @@ module OmniAuth
                'URI must contain code challenge value')
       end
 
-      def test_ssl_verify_defaults_to_true
-        assert_equal true, strategy.options.client_options.ssl_verify
+      def test_http_config_defaults_to_nil
+        assert_nil strategy.options.http_config
       end
 
-      def test_ssl_verify_can_be_disabled
-        strategy.options.client_options.ssl_verify = false
+      def test_http_config_is_called_when_callable
+        strategy.options.http_config = proc { |_f| nil }
 
-        # Mock the OpenIDConnect http_config to verify it's called with Faraday API
-        ::OpenIDConnect.stubs(:http_config).yields(mock_http_config = mock('http_config'))
-        mock_ssl = mock('ssl')
-        mock_http_config.stubs(:ssl).returns(mock_ssl)
+        ::OpenIDConnect.expects(:http_config).yields(mock('faraday'))
+
+        strategy.send(:configure_http!)
+      end
+
+      def test_http_config_is_not_called_when_nil
+        strategy.options.http_config = nil
+
+        ::OpenIDConnect.expects(:http_config).never
+
+        strategy.send(:configure_http!)
+      end
+
+      def test_http_config_receives_faraday_connection
+        faraday_conn = mock('faraday')
+        faraday_conn.expects(:ssl).returns(mock_ssl = mock('ssl'))
         mock_ssl.expects(:verify=).with(false)
 
-        # Trigger SSL configuration by accessing client
-        strategy.client
+        strategy.options.http_config = proc { |f| f.ssl.verify = false }
+
+        ::OpenIDConnect.expects(:http_config).yields(faraday_conn)
+
+        strategy.send(:configure_http!)
+      end
+
+      def test_configure_http_called_before_issuer_in_request_phase
+        call_order = []
+
+        strategy.stubs(:configure_http!).with { call_order << :configure_http! }
+        strategy.stubs(:issuer).with { call_order << :issuer }.returns('example.com')
+
+        strategy.options.issuer = ''
+        strategy.options.client_options.host = 'example.com'
+        strategy.stubs(:discover!)
+        strategy.stubs(:redirect)
+        strategy.stubs(:authorize_uri).returns('https://example.com/authorize')
+
+        strategy.request_phase
+
+        assert_equal :configure_http!, call_order.first, 'configure_http! must be called before issuer'
       end
     end
   end
